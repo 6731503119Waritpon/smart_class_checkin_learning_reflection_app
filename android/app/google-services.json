@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "784079751599",
+    "project_id": "checkinlearningreflection",
+    "storage_bucket": "checkinlearningreflection.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:784079751599:android:9dd0a95458094bfd50075a",
+        "android_client_info": {
+          "package_name": "com.example.smart_class_checkin_learning_reflection_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDcIbIxMowS9HqAE0RTDXsG-tb3IZBPbtQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
