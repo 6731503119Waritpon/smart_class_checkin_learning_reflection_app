@@ -20,28 +20,25 @@ class CheckInScreen extends StatefulWidget {
 
 class _CheckInScreenState extends State<CheckInScreen> {
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _previousTopicController =
-      TextEditingController();
-  final TextEditingController _expectedTopicController =
-      TextEditingController();
+  final _previousTopicCtrl = TextEditingController();
+  final _expectedTopicCtrl = TextEditingController();
 
-  final FirestoreService _firestoreService = FirestoreService();
-  final LocationService _locationService = LocationService();
+  final _firestore = FirestoreService();
+  final _location = LocationService();
 
-  int _selectedMood = 3;
+  int _mood = 3;
   String? _qrData;
-  double? _latitude;
-  double? _longitude;
-  bool _isLoading = false;
-  bool _locationLoading = false;
-  String? _locationError;
+  double? _lat, _lng;
+  bool _submitting = false;
+  bool _locLoading = false;
+  String? _locError;
 
-  final List<Map<String, dynamic>> _moods = [
-    {'score': 1, 'emoji': '😡', 'label': 'Very negative'},
-    {'score': 2, 'emoji': '🙁', 'label': 'Negative'},
-    {'score': 3, 'emoji': '😐', 'label': 'Neutral'},
-    {'score': 4, 'emoji': '🙂', 'label': 'Positive'},
-    {'score': 5, 'emoji': '😄', 'label': 'Very positive'},
+  final _moods = const [
+    {'s': 1, 'e': '😡', 'l': 'Very Bad'},
+    {'s': 2, 'e': '🙁', 'l': 'Bad'},
+    {'s': 3, 'e': '😐', 'l': 'Okay'},
+    {'s': 4, 'e': '🙂', 'l': 'Good'},
+    {'s': 5, 'e': '😄', 'l': 'Great'},
   ];
 
   @override
@@ -52,27 +49,30 @@ class _CheckInScreenState extends State<CheckInScreen> {
 
   @override
   void dispose() {
-    _previousTopicController.dispose();
-    _expectedTopicController.dispose();
+    _previousTopicCtrl.dispose();
+    _expectedTopicCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _getLocation() async {
+    if (!mounted) return;
     setState(() {
-      _locationLoading = true;
-      _locationError = null;
+      _locLoading = true;
+      _locError = null;
     });
     try {
-      final position = await _locationService.getCurrentLocation();
+      final p = await _location.getCurrentLocation();
+      if (!mounted) return;
       setState(() {
-        _latitude = position.latitude;
-        _longitude = position.longitude;
-        _locationLoading = false;
+        _lat = p.latitude;
+        _lng = p.longitude;
+        _locLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _locationError = e.toString();
-        _locationLoading = false;
+        _locError = e.toString();
+        _locLoading = false;
       });
     }
   }
@@ -82,462 +82,355 @@ class _CheckInScreenState extends State<CheckInScreen> {
       context,
       MaterialPageRoute(builder: (_) => const QrScannerScreen()),
     );
-    if (result != null) {
+    if (result != null && mounted) {
       setState(() => _qrData = result);
     }
   }
 
-  Future<void> _submitCheckIn() async {
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_qrData == null) return _snack('Please scan the QR code first', err: true);
+    if (_lat == null) return _snack('GPS not available', err: true);
 
-    if (_qrData == null) {
-      _showSnackBar('Please scan the QR code first', isError: true);
-      return;
-    }
-
-    if (_latitude == null || _longitude == null) {
-      _showSnackBar('GPS location not available', isError: true);
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
+    setState(() => _submitting = true);
     try {
-      final record = CheckInRecord(
+      await _firestore.createCheckIn(CheckInRecord(
         studentId: widget.studentId,
         studentName: widget.studentName,
         checkInTime: DateTime.now(),
-        checkInLatitude: _latitude!,
-        checkInLongitude: _longitude!,
+        checkInLatitude: _lat!,
+        checkInLongitude: _lng!,
         qrCodeData: _qrData!,
-        previousTopic: _previousTopicController.text.trim(),
-        expectedTopic: _expectedTopicController.text.trim(),
-        moodBefore: _selectedMood,
-      );
-
-      await _firestoreService.createCheckIn(record);
-
+        previousTopic: _previousTopicCtrl.text.trim(),
+        expectedTopic: _expectedTopicCtrl.text.trim(),
+        moodBefore: _mood,
+      ));
       if (mounted) {
-        _showSnackBar('✅ Check-in successful!');
+        _snack('Check-in successful! ✓');
         Navigator.pop(context);
       }
     } catch (e) {
-      _showSnackBar('Error: $e', isError: true);
+      _snack('Error: $e', err: true);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
-  void _showSnackBar(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.redAccent : const Color(0xFF4ECDC4),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
+  void _snack(String msg, {bool err = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: err ? const Color(0xFFEF6B6B) : const Color(0xFF5EDCB4),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF1a1a2e),
-              Color(0xFF16213e),
-              Color(0xFF0f3460),
-            ],
-          ),
-        ),
-        child: SafeArea(
+      appBar: _buildAppBar('Class Check-in'),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        child: Form(
+          key: _formKey,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // App Bar
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_rounded,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const Expanded(
-                      child: Text(
-                        'Class Check-in',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    const SizedBox(width: 48),
-                  ],
-                ),
+              // Status chips
+              _StatusChip(
+                icon: Icons.location_on_rounded,
+                label: _locLoading
+                    ? 'Getting location...'
+                    : _locError != null
+                        ? 'Location error'
+                        : 'Lat ${_lat?.toStringAsFixed(4)}, Lng ${_lng?.toStringAsFixed(4)}',
+                state: _locLoading
+                    ? _ChipState.loading
+                    : _locError != null
+                        ? _ChipState.error
+                        : _ChipState.success,
+                onRetry: _locError != null ? _getLocation : null,
               ),
+              const SizedBox(height: 10),
+              _StatusChip(
+                icon: Icons.qr_code_scanner_rounded,
+                label: _qrData != null ? 'QR: $_qrData' : 'QR not scanned',
+                state: _qrData != null ? _ChipState.success : _ChipState.idle,
+                onAction: _scanQR,
+                actionLabel: _qrData != null ? 'Rescan' : 'Scan',
+              ),
+              const SizedBox(height: 24),
 
-              // Content
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // GPS Status Card
-                        _buildStatusCard(
-                          icon: Icons.location_on_rounded,
-                          title: 'GPS Location',
-                          subtitle: _locationLoading
-                              ? 'Getting location...'
-                              : _locationError != null
-                                  ? 'Error: $_locationError'
-                                  : '📍 Lat: ${_latitude?.toStringAsFixed(6)}, '
-                                      'Lng: ${_longitude?.toStringAsFixed(6)}',
-                          isLoading: _locationLoading,
-                          isError: _locationError != null,
-                          isSuccess: _latitude != null,
-                          onRetry:
-                              _locationError != null ? _getLocation : null,
-                        ),
-                        const SizedBox(height: 16),
+              // Form card
+              _Card(
+                title: 'Pre-Class Reflection',
+                children: [
+                  TextFormField(
+                    controller: _previousTopicCtrl,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    maxLines: 2,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Required'
+                        : null,
+                    decoration: const InputDecoration(
+                      labelText: 'Previous class topic',
+                      hintText: 'What was covered last time?',
+                      prefixIcon: Icon(Icons.menu_book_rounded,
+                          color: Color(0xFF8B7BF7), size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _expectedTopicCtrl,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    maxLines: 2,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Required'
+                        : null,
+                    decoration: const InputDecoration(
+                      labelText: 'Expected topic today',
+                      hintText: 'What do you expect to learn?',
+                      prefixIcon: Icon(Icons.lightbulb_outline_rounded,
+                          color: Color(0xFF8B7BF7), size: 20),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
 
-                        // QR Code Card
-                        _buildStatusCard(
-                          icon: Icons.qr_code_scanner_rounded,
-                          title: 'QR Code',
-                          subtitle: _qrData != null
-                              ? '✅ Scanned: $_qrData'
-                              : 'Not scanned yet',
-                          isSuccess: _qrData != null,
-                          onAction: _scanQR,
-                          actionLabel: _qrData != null
-                              ? 'Scan Again'
-                              : 'Scan QR Code',
-                        ),
-                        const SizedBox(height: 24),
-
-                        // Form Card
-                        Container(
-                          padding: const EdgeInsets.all(24),
+                  // Mood
+                  const Text(
+                    'How are you feeling?',
+                    style: TextStyle(
+                      color: Color(0xFFCCCCD0),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: _moods.map((m) {
+                      final s = m['s'] as int;
+                      final selected = _mood == s;
+                      return GestureDetector(
+                        onTap: () => setState(() => _mood = s),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          width: 56,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.15),
-                            ),
+                            color: selected
+                                ? const Color(0xFF8B7BF7).withValues(alpha: 0.15)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                            border: selected
+                                ? Border.all(
+                                    color: const Color(0xFF8B7BF7)
+                                        .withValues(alpha: 0.5))
+                                : Border.all(color: Colors.transparent),
                           ),
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              Text(m['e'] as String,
+                                  style: TextStyle(
+                                      fontSize: selected ? 28 : 22)),
+                              const SizedBox(height: 4),
                               Text(
-                                'Pre-Class Reflection',
+                                m['l'] as String,
                                 style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white.withValues(alpha: 0.9),
+                                  color: selected
+                                      ? const Color(0xFF8B7BF7)
+                                      : const Color(0xFF8E8E93),
+                                  fontSize: 10,
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
                                 ),
-                              ),
-                              const SizedBox(height: 20),
-                              _buildFormField(
-                                controller: _previousTopicController,
-                                label: 'Previous Class Topic',
-                                hint:
-                                    'What topic was covered in the previous class?',
-                                icon: Icons.menu_book_rounded,
-                                maxLines: 2,
-                              ),
-                              const SizedBox(height: 16),
-                              _buildFormField(
-                                controller: _expectedTopicController,
-                                label: 'Expected Topic Today',
-                                hint: 'What do you expect to learn today?',
-                                icon: Icons.lightbulb_outline_rounded,
-                                maxLines: 2,
-                              ),
-                              const SizedBox(height: 24),
-
-                              // Mood Selector
-                              Text(
-                                'How are you feeling?',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: _moods.map((mood) {
-                                  final isSelected =
-                                      _selectedMood == mood['score'];
-                                  return GestureDetector(
-                                    onTap: () => setState(() =>
-                                        _selectedMood = mood['score']),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 200,
-                                      ),
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: isSelected
-                                            ? const Color(0xFF6C63FF)
-                                                .withValues(alpha: 0.3)
-                                            : Colors.transparent,
-                                        borderRadius:
-                                            BorderRadius.circular(14),
-                                        border: isSelected
-                                            ? Border.all(
-                                                color:
-                                                    const Color(0xFF6C63FF),
-                                                width: 2,
-                                              )
-                                            : null,
-                                      ),
-                                      child: Column(
-                                        children: [
-                                          Text(
-                                            mood['emoji'],
-                                            style: TextStyle(
-                                              fontSize: isSelected ? 32 : 26,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            '${mood['score']}',
-                                            style: TextStyle(
-                                              color: Colors.white
-                                                  .withValues(alpha: 0.7),
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 24),
-
-                        // Submit Button
-                        SizedBox(
-                          height: 56,
-                          child: ElevatedButton(
-                            onPressed: _isLoading ? null : _submitCheckIn,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF6C63FF),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              elevation: 8,
-                              shadowColor:
-                                  const Color(0xFF6C63FF).withValues(alpha: 0.5),
-                            ),
-                            child: _isLoading
-                                ? const SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2.5,
-                                    ),
-                                  )
-                                : const Text(
-                                    'Submit Check-in',
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                    ),
+                      );
+                    }).toList(),
                   ),
+                ],
+              ),
+              const SizedBox(height: 24),
+
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _submitting ? null : _submit,
+                  child: _submitting
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : const Text('Submit Check-in'),
                 ),
               ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildStatusCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    bool isLoading = false,
-    bool isError = false,
-    bool isSuccess = false,
-    VoidCallback? onRetry,
-    VoidCallback? onAction,
-    String? actionLabel,
-  }) {
+// ──────────────────────── Shared widgets ────────────────────────
+
+PreferredSizeWidget _buildAppBar(String title) {
+  return AppBar(
+    title: Text(
+      title,
+      style: const TextStyle(
+        fontWeight: FontWeight.w700,
+        fontSize: 20,
+        letterSpacing: -0.3,
+      ),
+    ),
+    centerTitle: true,
+    backgroundColor: const Color(0xFF101014),
+    surfaceTintColor: Colors.transparent,
+    elevation: 0,
+  );
+}
+
+enum _ChipState { idle, loading, success, error }
+
+class _StatusChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final _ChipState state;
+  final VoidCallback? onRetry;
+  final VoidCallback? onAction;
+  final String? actionLabel;
+
+  const _StatusChip({
+    required this.icon,
+    required this.label,
+    required this.state,
+    this.onRetry,
+    this.onAction,
+    this.actionLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent;
+    switch (state) {
+      case _ChipState.success:
+        accent = const Color(0xFF5EDCB4);
+        break;
+      case _ChipState.error:
+        accent = const Color(0xFFEF6B6B);
+        break;
+      default:
+        accent = const Color(0xFF8B7BF7);
+    }
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isError
-              ? Colors.redAccent.withValues(alpha: 0.5)
-              : isSuccess
-                  ? const Color(0xFF4ECDC4).withValues(alpha: 0.5)
-                  : Colors.white.withValues(alpha: 0.15),
-        ),
+        color: const Color(0xFF1C1C22),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: isError
-                  ? Colors.redAccent.withValues(alpha: 0.2)
-                  : isSuccess
-                      ? const Color(0xFF4ECDC4).withValues(alpha: 0.2)
-                      : const Color(0xFF6C63FF).withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: isLoading
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Color(0xFF6C63FF),
-                    ),
-                  )
-                : Icon(
-                    icon,
-                    color: isError
-                        ? Colors.redAccent
-                        : isSuccess
-                            ? const Color(0xFF4ECDC4)
-                            : const Color(0xFF6C63FF),
-                    size: 24,
-                  ),
-          ),
-          const SizedBox(width: 12),
+          if (state == _ChipState.loading)
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: accent,
+              ),
+            )
+          else
+            Icon(icon, color: accent, size: 20),
+          const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: 12,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              label,
+              style: const TextStyle(color: Color(0xFFCCCCD0), fontSize: 13),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           if (onRetry != null)
-            IconButton(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-            ),
+            _miniBtn(Icons.refresh_rounded, accent, onRetry!),
           if (onAction != null)
-            TextButton(
-              onPressed: onAction,
-              style: TextButton.styleFrom(
-                backgroundColor: const Color(0xFF6C63FF).withValues(alpha: 0.2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              child: Text(
-                actionLabel ?? 'Action',
-                style: const TextStyle(
-                  color: Color(0xFF6C63FF),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
-              ),
-            ),
+            _miniTextBtn(actionLabel ?? 'Go', accent, onAction!),
         ],
       ),
     );
   }
 
-  Widget _buildFormField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required IconData icon,
-    int maxLines = 1,
-  }) {
-    return TextFormField(
-      controller: controller,
-      maxLines: maxLines,
-      style: const TextStyle(color: Colors.white),
-      validator: (value) {
-        if (value == null || value.trim().isEmpty) {
-          return 'Please enter $label';
-        }
-        return null;
-      },
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        labelStyle: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-        hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
-        prefixIcon: Icon(icon, color: const Color(0xFF6C63FF)),
-        filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.08),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide.none,
+  Widget _miniBtn(IconData ic, Color c, VoidCallback fn) {
+    return InkWell(
+      onTap: fn,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(ic, color: c, size: 18),
+      ),
+    );
+  }
+
+  Widget _miniTextBtn(String text, Color c, VoidCallback fn) {
+    return GestureDetector(
+      onTap: fn,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: c.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
         ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(
-            color: Colors.white.withValues(alpha: 0.1),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: c,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: Color(0xFF6C63FF),
-            width: 2,
+      ),
+    );
+  }
+}
+
+class _Card extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _Card({required this.title, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C22),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF2A2A32)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFCCCCD0),
+            ),
           ),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Colors.redAccent),
-        ),
+          const SizedBox(height: 16),
+          ...children,
+        ],
       ),
     );
   }
